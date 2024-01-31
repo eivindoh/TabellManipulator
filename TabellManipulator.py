@@ -290,7 +290,7 @@ class CsvExcelProcessor(QMainWindow):
             top_level_name = self.level_0_name_input.text()
             id_prefix = self.id_number_prefix_input.text()
             df = self.generate_columns(df, top_level_name, id_prefix)
-            df_sorted = self.sort_names(df)
+            df_sorted = self.sort_names(df)  
 
             # Eksport til ny CSV-fil
             export_file_path, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "CSV-filer (*.csv)")
