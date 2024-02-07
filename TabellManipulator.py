@@ -283,62 +283,80 @@ class CsvExcelProcessor(QMainWindow):
             df = pd.read_csv(self.org_csv_file_path, sep=';', encoding=encoding, header=None)
 
             # Identifiser header-row
-            header_row = df[df.apply(lambda x: x.str.contains('Enhetstype \(nivå 1\)', na=False, regex=True)).any(axis=1)].index[0]
+            header_row = df[df.apply(lambda x: x.str.contains(r'Enhetstype \(nivå 1\)', na=False, regex=True)).any(axis=1)].index[0]
             df = pd.read_csv(self.org_csv_file_path, sep=';', encoding=encoding, header=header_row)
 
             # Generer kolonnene
             top_level_name = self.level_0_name_input.text()
             id_prefix = self.id_number_prefix_input.text()
-            df = self.generate_columns(df, top_level_name, id_prefix)
-            df_sorted = self.sort_names(df)  
+            df_final = self.generate_columns(df, top_level_name, id_prefix)
 
             # Eksport til ny CSV-fil
             export_file_path, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "CSV-filer (*.csv)")
             if export_file_path:
-                df_sorted.to_csv(export_file_path, sep=';', encoding='utf-8', index=False)
+                df_final.to_csv(export_file_path, sep=';', encoding='utf-8', index=False)
+
+    def find_parent(self, df, level, row):
+        # Topplevel har ingen parent.
+        if level == 0:
+            return "Top"
+        if level == 1:
+            return self.level_0_name_input.text()
+        # Finn parent ved å gå bakover i nivåene til vi finner en ikke-null enhetskode.
+        for parent_level in range(level - 1, 0, -1):
+            parent_code_col = f'Enhetskode (nivå {parent_level})'
+            parent_name_col = f'Enhetsnavn (nivå {parent_level})'
+            if pd.notna(row[parent_code_col]):
+                return f"{row[parent_code_col]} - {row[parent_name_col]}"
+        return None
 
     def generate_columns(self, df, top_level_name, id_prefix):
-        # Finn alle kolonnenavn som inneholder "Enhetstype"
-        level_columns = [col for col in df.columns if "Enhetstype" in col]
-        level_codes = [col.replace("Enhetstype", "Enhetskode") for col in level_columns]
+        # Initialiserer output DataFrame
+        output_df = pd.DataFrame(columns=["Name", "ID number", "Description", "Parent", "ID Sort Key"])
+        id_counter = 1  # Starter telleren fra 1 for toppnivået
 
-        # Generer 'Name' og 'Parent' for hver rad
-        for i, row in df.iterrows():
-            # Finn høyeste nivå for enhetstypen som finnes i raden
-            for level, code_col in reversed(list(enumerate(level_codes))):
-                if pd.notna(row[code_col]):
-                    # Sett 'Name' til kombinasjonen av kode og type
-                    df.at[i, 'Name'] = f"{row[code_col]} - {row[level_columns[level]]}"
-                    # Sett 'Parent' basert på nivået over eller til toppnivå hvis det er nivå 1
-                    parent_level = level - 1
-                    df.at[i, 'Parent'] = top_level_name if parent_level < 0 else f"{row[level_codes[parent_level]]} - {row[level_columns[parent_level]]}"
-                    break
-            # Generer 'ID number'
-            df.at[i, 'ID number'] = f"{id_prefix}-{i+1}"
+        # Legger til toppnivået
+        output_df.loc[id_counter] = {
+            "Name": top_level_name, 
+            "ID number": f"{id_prefix}-{id_counter}", 
+            "Description": "", 
+            "Parent": "Top",
+            "ID Sort Key": id_counter
+        }
+        id_counter += 1
 
-    def sort_names(self, df):
-        # Splitter 'Name' kolonnen på bindestrek og konverterer første del til heltall for sortering
-        df[['SortKey', 'Rest']] = df['Name'].str.split(' - ', expand=True)
-        df['SortKey'] = pd.to_numeric(df['SortKey'], errors='coerce')
-        
-        # Sorterer DataFrame basert på den numeriske nøkkelen
-        df = df.sort_values(by=['SortKey', 'Rest'])
-        
-        # Fjerner den midlertidige 'SortKey' kolonnen og setter sammen 'Name' kolonnen igjen
-        df['Name'] = df['SortKey'].astype(str) + ' - ' + df['Rest']
-        df.drop(['SortKey', 'Rest'], axis=1, inplace=True)
-        
-        # Resette index etter sortering
-        df.reset_index(drop=True, inplace=True)
-        
-        return df
+        # Prosesser hver enhetstype nivå for nivå
+        for level in range(1, df.filter(like='Enhetstype (nivå').shape[1] + 1):
+            # Prosesser hver rad i DataFrame
+            for _, row in df.iterrows():
+                # Sjekk for enhetsnavn på gjeldende nivå
+                name_col = f'Enhetsnavn (nivå {level})'
+                code_col = f'Enhetskode (nivå {level})'
 
-        # Fjern rader med tomme 'Name'
-        df = df[df['Name'].notna()]
+                if pd.notna(row[name_col]):
+                    name = f"{row[code_col]} - {row[name_col]}"
+                    # Finn parent basert på nivået over
+                    parent = self.find_parent(df, level, row)
 
-        print(df.head)
-        
-        return df[['Name', 'ID number', 'Parent']]
+                    # Legg til raden i output_df
+                    output_df.loc[id_counter] = {
+                        "Name": name, 
+                        "ID number": f"{id_prefix}-{id_counter}", 
+                        "Description": "", 
+                        "Parent": parent,
+                        "ID Sort Key": id_counter
+                    }
+                    id_counter += 1
+
+        # Fjern duplikate navn og sorter basert på ID Sort Key
+        output_df = output_df.drop_duplicates(subset='Name')
+        output_df = output_df.sort_values(by='ID Sort Key').reset_index(drop=True)
+        for index, _ in enumerate(output_df.index):
+            output_df.at[index + 1, 'ID number'] = f"{id_prefix}-{index + 1}"
+        output_df.drop('ID Sort Key', axis=1, inplace=True)  # Fjerner den midlertidige sorteringkolonnen
+        output_df = output_df[output_df['Name'].notna() & (output_df['Name'].str.strip() != '')]
+
+        return output_df
     
         
 
