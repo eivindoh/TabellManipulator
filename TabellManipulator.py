@@ -1,6 +1,6 @@
 import sys
 import pandas as pd
-from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QPushButton, QWidget, QComboBox, QHBoxLayout, QVBoxLayout, QRadioButton, QButtonGroup, QLineEdit, QLabel, QCheckBox, QListWidget, QTabWidget
+from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QPushButton, QWidget, QComboBox, QHBoxLayout, QVBoxLayout, QRadioButton, QButtonGroup, QLineEdit, QLabel, QMessageBox, QCheckBox, QListWidget, QTabWidget
 import chardet
 
 class CsvExcelProcessor(QMainWindow):
@@ -82,6 +82,17 @@ class CsvExcelProcessor(QMainWindow):
 
         # Koble radioknapp-signaler til en metode for å vise/skjule tekstfelt og nedtrekksmeny
         self.radioGroup2.buttonClicked.connect(self.handleRadioSelection)
+
+        self.createColumnCheckBox = QCheckBox("Opprett ny kolonne for tekst", self.tab1)
+        col4Layout.addWidget(self.createColumnCheckBox)
+
+        self.newColumnNameLineEdit = QLineEdit(self.tab1)
+        self.newColumnNameLineEdit.setPlaceholderText("Kolonnenavn")
+        self.newColumnNameLineEdit.hide()  # Skjul som standard
+        col4Layout.addWidget(self.newColumnNameLineEdit)
+
+# Oppdater visningen basert på checkbox-tilstanden
+        self.createColumnCheckBox.stateChanged.connect(self.updateColumnInputMethod)
 
         # Opprettelse av avkrysningsbokser for eksportformat
         self.exportCsvCheckBox = QCheckBox("Eksporter som CSV", self.tab1)
@@ -168,7 +179,13 @@ class CsvExcelProcessor(QMainWindow):
         col3Layout = QVBoxLayout()
 
 
-    
+    def updateColumnInputMethod(self):
+        if self.createColumnCheckBox.isChecked():
+            self.newColumnNameLineEdit.show()
+            self.columnComboBox3.hide()  # Skjul nedtrekksmenyen når checkbox er avkrysset
+        else:
+            self.newColumnNameLineEdit.hide()
+            self.columnComboBox3.show()
         
 
     def openFileNameDialog(self):
@@ -187,10 +204,19 @@ class CsvExcelProcessor(QMainWindow):
         if self.df.empty:
             print("Ingen data å jobbe med")
             return
+            
         
         self.columnDeletionList.setHidden(not checked)
         if checked:
+            self.updateColumnDeletionList()
             self.columnDeletionList.addItems(self.df.columns)
+
+    def updateColumnDeletionList(self):
+        self.columnDeletionList.clear()  # Fjern eksisterende elementer
+        if self.df is not None:
+            columns = self.df.columns
+            for column in columns:
+                self.columnDeletionList.addItem(column)
 
     def applyColumnDeletions(self):
         if self.deleteColumnsCheckBox.isChecked():
@@ -199,26 +225,42 @@ class CsvExcelProcessor(QMainWindow):
             
 
     def loadFile(self, filePath):
-        # Bruk chardet for å gjenkjenne tegnsettet
+    # Bruk chardet for å gjenkjenne tegnsettet
         with open(filePath, 'rb') as file:
-            encoding = chardet.detect(file.read(100000))['encoding']
+            encoding_result = chardet.detect(file.read(100000))
+            encoding = encoding_result['encoding']
 
         # Hvis chardet ikke finner et tegnsett, bruker vi UTF-8 som fallback
         if not encoding:
             encoding = 'utf-8'
+        
+        # Les de første linjene for å gjette separator
+        with open(filePath, 'r', encoding=encoding) as file:
+            sample = file.read(2048)  # Les en liten del av filen for å gjette separator
+            separator = self.guess_separator(sample)
 
-        # Les inn filen med gjenkjent tegnsett
+        # Les inn filen med gjenkjent tegnsett og separator
         if filePath.endswith('.csv'):
-            self.df = pd.read_csv(filePath, sep=';', encoding=encoding)
+            self.df = pd.read_csv(filePath, sep=separator, encoding=encoding)
         elif filePath.endswith('.xlsx'):
             self.df = pd.read_excel(filePath)
         else:
             print("Ugyldig filformat")
             return
         
+        self.updateColumnDeletionList()
+        self.updateColumnComboBoxes()
+
+    def guess_separator(self, sample):
+        separators = [',', ';', '\t', '|']
+        separator_counts = {sep: sample.count(sep) for sep in separators}
+        guessed_separator = max(separator_counts, key=separator_counts.get)
+        print(f"Separator counts: {separator_counts}, guessed: {guessed_separator}")  # Feilsøking
+        return guessed_separator
+        
         
             
-        self.updateColumnComboBoxes()
+    
 
     def applyRules(self):
         if self.df.empty:
@@ -240,6 +282,16 @@ class CsvExcelProcessor(QMainWindow):
             return
 
         # Utfør handlingen basert på valgt betingelse
+        if self.createColumnCheckBox.isChecked():
+            new_col_name = self.newColumnNameLineEdit.text().strip()
+            if not new_col_name:  # Sjekk at kolonnenavn ikke er tomt
+                print("Kolonnenavn er ikke spesifisert.")
+                return
+            self.df[new_col_name] = ''  # Opprett en ny kolonne hvis den ikke eksisterer
+            target_column = new_col_name
+        else:
+            target_column = self.extraColumnComboBox.currentText()
+
         if action == "SKRIV TEKST FRA TEKSTFELT":
             text_to_write = self.lineEdit.text()
             self.df.loc[matching_rows, target_column] = text_to_write
@@ -259,21 +311,47 @@ class CsvExcelProcessor(QMainWindow):
         self.df = self.convert_floats_to_ints(self.df)
 
         if self.df.empty:
-            print("Ingen data å eksportere")
+            QMessageBox.information(self, "Ingen data", "Ingen data å eksportere")
             return
 
         options = QFileDialog.Options()
-        filePath, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "Alle filer (*);;CSV-filer (*.csv);;Excel-filer (*.xlsx)", options=options)
+        baseFilePath, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "Alle filer (*);;CSV-filer (*.csv);;Excel-filer (*.xlsx)", options=options)
         
-        if not filePath:
+        if not baseFilePath:
             return
 
-        if self.exportCsvCheckBox.isChecked():
-            self.df.to_csv(filePath, sep=';', encoding='utf-8', index=False)
-        elif self.exportExcelCheckBox.isChecked():
-            self.df.to_excel(filePath, index=False)
-        else:
-            print("Vennligst velg et eksportformat")
+        exportToCsv = self.exportCsvCheckBox.isChecked()
+        exportToExcel = self.exportExcelCheckBox.isChecked()
+
+        if not exportToCsv and not exportToExcel:
+            QMessageBox.warning(self, "Eksportformat ikke valgt", "Vennligst velg minst ett eksportformat")
+            return
+
+        exportedFiles = []  # En liste for å holde stiene til eksporterte filer
+
+        try:
+            if exportToCsv:
+                csvFilePath = baseFilePath if baseFilePath.endswith('.csv') else baseFilePath + '.csv'
+                self.df.to_csv(csvFilePath, sep=';', encoding='utf-8', index=False)
+                exportedFiles.append(csvFilePath)  # Legg til CSV-filbanen til listen
+
+            if exportToExcel:
+                if baseFilePath.endswith('.csv'):
+                    baseFilePath = filePath[:-4]
+                excelFilePath = baseFilePath if baseFilePath.endswith('.xlsx') else baseFilePath + '.xlsx'
+                self.df.to_excel(excelFilePath, index=False)
+                exportedFiles.append(excelFilePath)  # Legg til Excel-filbanen til listen
+
+            # Sjekk antall eksporterte filer og vis tilsvarende meldingsboks
+            if len(exportedFiles) == 2:  # Begge formatene ble eksportert
+                QMessageBox.information(self, "Eksport fullført", f"Data eksportert i begge formatene:\nCSV: {exportedFiles[0]}\nExcel: {exportedFiles[1]}")
+            elif len(exportedFiles) == 1:  # Kun ett format ble eksportert
+                QMessageBox.information(self, "Eksport fullført", f"Data eksportert til: {exportedFiles[0]}")
+            else:  # Ingen filer ble eksportert, noe som normalt ikke skulle skje gitt tidligere sjekker
+                QMessageBox.warning(self, "Ingen eksport utført", "Ingen data ble eksportert. Vennligst velg et eksportformat og prøv igjen.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Eksportfeil", f"En feil oppstod under eksportering: {str(e)}")
 
     def convert_and_export_org_csv(self):
         if self.org_csv_file_path:
