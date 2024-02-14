@@ -2,12 +2,19 @@ import sys
 import pandas as pd
 from PyQt5.QtWidgets import QApplication, QMainWindow, QFileDialog, QVBoxLayout, QPushButton, QWidget, QComboBox, QHBoxLayout, QVBoxLayout, QRadioButton, QButtonGroup, QLineEdit, QLabel, QMessageBox, QCheckBox, QListWidget, QTabWidget
 import chardet
+import logging
+import traceback
 
 class CsvExcelProcessor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.df = None
         self.initUI()
+        # Oppsett for logging
+        logging.basicConfig(filename='Tabellmanipulator.log', 
+                            filemode='w', 
+                            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                            level=logging.WARNING) # Dette vil fange opp WARNING, ERROR og CRITICAL meldinger
 
     def initUI(self):
         self.setWindowTitle('CSV/Excel Processor')
@@ -354,25 +361,34 @@ class CsvExcelProcessor(QMainWindow):
             QMessageBox.critical(self, "Eksportfeil", f"En feil oppstod under eksportering: {str(e)}")
 
     def convert_and_export_org_csv(self):
-        if self.org_csv_file_path:
-            # Les inn filen
-            with open(self.org_csv_file_path, 'rb') as file:
-                encoding = chardet.detect(file.read(100000))['encoding']
-            df = pd.read_csv(self.org_csv_file_path, sep=';', encoding=encoding, header=None)
+        try:
+            if self.org_csv_file_path:
+                # Les inn filen
+                with open(self.org_csv_file_path, 'rb') as file:
+                    encoding = chardet.detect(file.read(100000))['encoding']
+                df = pd.read_csv(self.org_csv_file_path, sep=';', encoding=encoding, header=None, dtype=str)
 
-            # Identifiser header-row
-            header_row = df[df.apply(lambda x: x.str.contains(r'Enhetstype \(nivå 1\)', na=False, regex=True)).any(axis=1)].index[0]
-            df = pd.read_csv(self.org_csv_file_path, sep=';', encoding=encoding, header=header_row)
+                # Identifiser header-row
+                header_row = df[df.apply(lambda x: x.str.contains(r'Enhetstype \(nivå 1\)', na=False, regex=True)).any(axis=1)].index[0]
+                df = pd.read_csv(self.org_csv_file_path, sep=';', encoding=encoding, header=header_row)
 
-            # Generer kolonnene
-            top_level_name = self.level_0_name_input.text()
-            id_prefix = self.id_number_prefix_input.text()
-            df_final = self.generate_columns(df, top_level_name, id_prefix)
+                # Generer kolonnene
+                top_level_name = self.level_0_name_input.text()
+                id_prefix = self.id_number_prefix_input.text()
+                df_final = self.generate_columns(df, top_level_name, id_prefix)
 
-            # Eksport til ny CSV-fil
-            export_file_path, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "CSV-filer (*.csv)")
-            if export_file_path:
-                df_final.to_csv(export_file_path, sep=';', encoding='utf-8', index=False)
+                # Eksport til ny CSV-fil
+                export_file_path, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "CSV-filer (*.csv)")
+                if export_file_path:
+                    df_final.to_csv(export_file_path, sep=';', encoding='utf-8', index=False)
+                    QMessageBox.information(self, "Eksport fullført", f"'{export_file_path}' ble eksportert uten problemer og lagret i '{export_file_path}'")
+            else:
+                QMessageBox.information(self, "Kildedata mangler", f"Glemte du å importere csv-filen?")
+        except Exception as e:
+            logging.error(f"En uventet feil oppsto: {e}")
+            QMessageBox.warning(self, "Oops!", f"En utventet feil oppsto. Kontakt support med følgende feilkode: {e}")
+            logging.error(traceback.format_exc())  # Logger stack trace
+
 
     def find_parent(self, df, level, row):
         # Topplevel har ingen parent.
@@ -387,11 +403,22 @@ class CsvExcelProcessor(QMainWindow):
             if pd.notna(row[parent_code_col]):
                 return f"{row[parent_code_col]} - {row[parent_name_col]}"
         return None
+    
+    def clean_enhetskoder(self, df):
+        # Finn alle kolonner som starter med "Enhetskode (niv"
+        enhetskode_columns = [col for col in df.columns if col.startswith('Enhetskode (niv')]
+        
+        # Gå gjennom alle funnede kolonner og fjern '.0'
+        for col in enhetskode_columns:
+            df[col] = df[col].astype(str).str.replace('.0', '', regex=False)
+        
+        return df
 
     def generate_columns(self, df, top_level_name, id_prefix):
         # Initialiserer output DataFrame
         output_df = pd.DataFrame(columns=["Name", "ID number", "Description", "Parent", "ID Sort Key"])
-        id_counter = 1  # Starter telleren fra 1 for toppnivået
+        id_counter = 0  # Starter telleren fra 0 for nivå 0 (0 er topp)
+        df = self.clean_enhetskoder(df)
 
         # Legger til toppnivået
         output_df.loc[id_counter] = {
@@ -403,6 +430,7 @@ class CsvExcelProcessor(QMainWindow):
         }
         id_counter += 1
 
+
         # Prosesser hver enhetstype nivå for nivå
         for level in range(1, df.filter(like='Enhetstype (nivå').shape[1] + 1):
             # Prosesser hver rad i DataFrame
@@ -412,7 +440,8 @@ class CsvExcelProcessor(QMainWindow):
                 code_col = f'Enhetskode (nivå {level})'
 
                 if pd.notna(row[name_col]):
-                    name = f"{row[code_col]} - {row[name_col]}"
+                    code = str(row[code_col]).replace('.0', '')
+                    name = f"{code} - {row[name_col]}"
                     # Finn parent basert på nivået over
                     parent = self.find_parent(df, level, row)
 
