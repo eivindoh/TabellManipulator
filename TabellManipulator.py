@@ -339,7 +339,12 @@ class CsvExcelProcessor(QMainWindow):
         try:
             if exportToCsv:
                 csvFilePath = baseFilePath if baseFilePath.endswith('.csv') else baseFilePath + '.csv'
-                self.df.to_csv(csvFilePath, sep=';', encoding='utf-8', index=False)
+                
+                # Åpne filen med utf-8-sig for å inkludere BOM
+                with open(csvFilePath, 'w', encoding='utf-8-sig', newline='') as f:
+                    # Eksporter uten å spesifisere encoding her, siden filen allerede er åpnet med korrekt encoding
+                    self.df.to_csv(f, sep=';', index=False)
+                
                 exportedFiles.append(csvFilePath)  # Legg til CSV-filbanen til listen
 
             if exportToExcel:
