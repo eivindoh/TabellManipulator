@@ -391,7 +391,7 @@ class CsvExcelProcessor(QMainWindow):
                         df_final.to_csv(f, sep=';', index=False)
                     
                     QMessageBox.information(self, "Eksport fullført", f"'{export_file_path}' ble eksportert uten problemer og lagret i '{export_file_path}'")
-                    QMessageBox.warning(self, "Eksport fullført", f"Husk at du må importere csv manuelt i Excel for å se innholdet med riktig tegnsett (UTF-8)! Filen har riktig tegnsett - det er Excel som viser innholdet feil.")
+#                    QMessageBox.warning(self, "Eksport fullført", f"Husk at du må importere csv manuelt i Excel for å se innholdet med riktig tegnsett (UTF-8)! Filen har riktig tegnsett - det er Excel som viser innholdet feil.")
             else:
                 QMessageBox.information(self, "Kildedata mangler", f"Glemte du å importere csv-filen?")
         except Exception as e:
