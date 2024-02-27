@@ -380,7 +380,11 @@ class CsvExcelProcessor(QMainWindow):
                 # Eksport til ny CSV-fil
                 export_file_path, _ = QFileDialog.getSaveFileName(self, "Lagre fil som", "", "CSV-filer (*.csv)")
                 if export_file_path:
-                    df_final.to_csv(export_file_path, sep=';', encoding='utf-8', index=False)
+                    # Åpne filen manuelt med utf-8-sig for å inkludere BOM
+                    with open(export_file_path, 'w', encoding='utf-8-sig', newline='') as f:
+                        # Eksporter uten å spesifisere encoding her, siden filen allerede er åpnet med korrekt encoding
+                        df_final.to_csv(f, sep=';', index=False)
+                    
                     QMessageBox.information(self, "Eksport fullført", f"'{export_file_path}' ble eksportert uten problemer og lagret i '{export_file_path}'")
                     QMessageBox.warning(self, "Eksport fullført", f"Husk at du må importere csv manuelt i Excel for å se innholdet med riktig tegnsett (UTF-8)! Filen har riktig tegnsett - det er Excel som viser innholdet feil.")
             else:
